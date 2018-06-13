@@ -1,0 +1,65 @@
+##1.reads cleaning
+cutadapt -m 20 -a AGATCGGAAGAGCACACGTCT --trim-n --max-n 1 -o mettl3.ada.fastq mettl3.fastq.bz2 
+fastq_quality_trimmer -Q 33 -i mettl3.ada.fastq -o mettl3.clean0.fastq -l 20 -t 20
+fastq_quality_filter -Q 33 -q 20 -p 98 -o mettl3.clean.fastq -i mettl3.clean0.fastq 
+
+
+#2.mapping and read expression
+tophat -p 12 -G gencode.v19.annotation.gtf -o mettl3_tophat hg19 mettl3.clean.fastq
+htseq-count -f bam mettl3_1_tophat/accepted_hits.bam gencode.v19.annotation.gtf > mettl3_1_tophat/accepted_hits.count.txt
+
+paste <(awk '{print $1,"\t",$2}' hela_tophat/accepted_hits.count.txt) <(awk '{print $2}' shGFP_tophat/accepted_hits.count.txt)  <(awk '{print $2}' mettl3_1_tophat/accepted_hits.count.txt) <(awk '{print $2}' mettl3_2_tophat/accepted_hits.count.txt) > all.count.txt
+
+R:
+countTable <- read.delim("all.count.txt", row.names = 1)
+library( "edgeR")
+library("data.table")
+trlength = fread("gencode.v19.annotation.genelength")
+gnlength = trlength[,list(gene_id,tx_len)]
+setnames(gnlength, c('gene', 'length'))
+glength= gnlength[match(gsub(" ","",rownames(countTable)),gnlength$gene),]
+y <- DGEList(counts=countTable,genes=data.frame(Length=glength[,length]))
+y <- calcNormFactors(y)
+RPKM <- rpkm(y)
+write.table(RPKM, file="rpkm.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
+
+
+##3.alternative splicing
+python RNASeq-MATS.py -b1 mettl3_1_tophat/accepted_hits.bam -b2 hela_tophat/accepted_hits.bam -gtf gencode.v19.annotation.gtf -o shGFP_vs_mettl3_1 -t single -len 72
+
+
+##4. halflife RNA-SEQ
+tophat -p 12 -G gencode.v19.annotation.gtf -o mettl3_tophat hg19_ERCC mettl3.ercc.clean.fastq
+htseq-count -f bam mettl3_1_ercc_tophat/accepted_hits.bam gencode.v19.annotation.with.ercc.gtf > mettl3_1_ercc_tophat/accepted_hits.count.txt
+
+paste <(awk '{print $1,"\t",$2}' hela_ercc_tophat/accepted_hits.count.txt) <(awk '{print $2}' shGFP_ercc_tophat/accepted_hits.count.txt)  <(awk '{print $2}' mettl3_1_ercc_tophat/accepted_hits.count.txt) <(awk '{print $2}' mettl3_2_ercc_tophat/accepted_hits.count.txt) > all.count.ercc.txt
+
+R:
+countTable <- read.delim("all.count.ercc.txt", row.names = 1)
+library( "edgeR")
+library("data.table")
+trlength = fread("gencode.v19.annotation.add.ercc.genelength")
+gnlength = trlength[,list(gene_id,tx_len)]
+setnames(gnlength, c('gene', 'length'))
+glength= gnlength[match(gsub(" ","",rownames(countTable)),gnlength$gene),]
+y <- DGEList(counts=countTable,genes=data.frame(Length=glength[,length]))
+y <- calcNormFactors(y)
+RPKM <- rpkm(y)
+write.table(RPKM, file="rpkm.ercc.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
+
+halftime = list()
+for(sm in c("hela", "shGFP", "mettl3_1", "mettl3_2")) {
+    control = paste0(sm,".A0h")
+    cols = c()
+    for(tp in c(2, 4, 6)) {
+        case = paste0(sm,".A",tp,"h")
+        RPKM[,paste0(sm,".t",tp) := abs(-1*log2(eval(as.name(case))/eval(as.name(control)))/tp)]
+        cols = c(cols,paste0(sm,".t",tp))
+    }
+    RPKM[,eval(sm) := apply(.SD, 1, function(x) 1/mean(x)), .SDcols=cols]
+    halftime[[sm]] = RPKM[,list(symbol,eval(as.name(sm)),sm)]
+}
+halftime = rbindlist(halftime)
+write.table(halftime, file="halftime.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
+
+
