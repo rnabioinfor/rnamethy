@@ -4,12 +4,14 @@ fastq_quality_trimmer -Q 33 -i mettl3.ada.fastq -o mettl3.clean0.fastq -l 20 -t 
 fastq_quality_filter -Q 33 -q 20 -p 98 -o mettl3.clean.fastq -i mettl3.clean0.fastq 
 
 
-#2.mapping and read expression
+##2.mapping and read expression
 tophat -p 12 -G gencode.v19.annotation.gtf -o mettl3_tophat hg19 mettl3.clean.fastq
 htseq-count -f bam mettl3_1_tophat/accepted_hits.bam gencode.v19.annotation.gtf > mettl3_1_tophat/accepted_hits.count.txt
 
+#merge counts
 paste <(awk '{print $1,"\t",$2}' hela_tophat/accepted_hits.count.txt) <(awk '{print $2}' shGFP_tophat/accepted_hits.count.txt)  <(awk '{print $2}' mettl3_1_tophat/accepted_hits.count.txt) <(awk '{print $2}' mettl3_2_tophat/accepted_hits.count.txt) > all.count.txt
 
+#rpkm expression calculation
 R:
 countTable <- read.delim("all.count.txt", row.names = 1)
 library( "edgeR")
@@ -32,6 +34,7 @@ python RNASeq-MATS.py -b1 mettl3_1_tophat/accepted_hits.bam -b2 hela_tophat/acce
 tophat -p 12 -G gencode.v19.annotation.gtf -o mettl3_tophat hg19_ERCC mettl3.ercc.clean.fastq
 htseq-count -f bam mettl3_1_ercc_tophat/accepted_hits.bam gencode.v19.annotation.with.ercc.gtf > mettl3_1_ercc_tophat/accepted_hits.count.txt
 
+#merge rna-seq count
 paste <(awk '{print $1,"\t",$2}' hela_ercc_tophat/accepted_hits.count.txt) <(awk '{print $2}' shGFP_ercc_tophat/accepted_hits.count.txt)  <(awk '{print $2}' mettl3_1_ercc_tophat/accepted_hits.count.txt) <(awk '{print $2}' mettl3_2_ercc_tophat/accepted_hits.count.txt) > all.count.ercc.txt
 
 R:
@@ -46,7 +49,6 @@ y <- DGEList(counts=countTable,genes=data.frame(Length=glength[,length]))
 y <- calcNormFactors(y)
 RPKM <- rpkm(y)
 write.table(RPKM, file="rpkm.ercc.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
-
 halftime = list()
 for(sm in c("hela", "shGFP", "mettl3_1", "mettl3_2")) {
     control = paste0(sm,".A0h")
@@ -62,4 +64,31 @@ for(sm in c("hela", "shGFP", "mettl3_1", "mettl3_2")) {
 halftime = rbindlist(halftime)
 write.table(halftime, file="halftime.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
 
-
+##TCGA
+R:
+library("TCGAbiolinks")
+misodifffiles = list.files("./", pattern = "*.mRNA_readcount_data.txt", full.names = TRUE, ignore.case = TRUE)
+objgene="METTL3"
+dat = data.frame(ctype=NULL,exp=NULL,sample=NULL)
+alldat = data.frame(ctype=NULL,exp=NULL,sample=NULL)
+#statistic = data.frame()
+for(infile in misodifffiles){
+       aa = read.table(infile,sep="\t",header = T,as.is=T,check.names=FALSE)
+       name = sub(".*TCGA-(\\w+).mRNA_readcount_data.txt","\\1",infile)
+       sampleBarcodes = colnames(aa)
+       dataSmTP <- TCGAquery_SampleTypes(barcode = sampleBarcodes, typesample = "TP")
+       dataSmNT <- TCGAquery_SampleTypes(barcode = sampleBarcodes, typesample = "NT")
+       expTP = aa[aa[,1]==objgene,dataSmTP]
+       expNT = aa[aa[,1]==objgene,dataSmNT]
+       a1 = data.frame(ctype=rep(name,length(expTP)),exp=as.numeric(expTP),sample=rep("TP",length(expTP)))
+       if(length(expNT) != 0){
+            a2 = data.frame(ctype=name,exp=as.numeric(expNT),sample=rep("NT",length(expNT)))
+            a1 = rbind(a1,a2)
+            dat = rbind(dat,a1)
+       }
+       alldat = rbind(alldat,a1)       
+}
+dat[,2] = log2(dat[,2]+0.0001)
+dat = dat[!is.na(dat[,2]),]
+alldat[,2] = log2(alldat[,2]+0.0001)
+write.table(alldat, file="tcga.gene.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
