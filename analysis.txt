@@ -31,24 +31,7 @@ python RNASeq-MATS.py -b1 mettl3_1_tophat/accepted_hits.bam -b2 hela_tophat/acce
 
 
 ##4. halflife RNA-SEQ
-tophat -p 12 -G gencode.v19.annotation.gtf -o mettl3_tophat hg19_ERCC mettl3.ercc.clean.fastq
-htseq-count -f bam mettl3_1_ercc_tophat/accepted_hits.bam gencode.v19.annotation.with.ercc.gtf > mettl3_1_ercc_tophat/accepted_hits.count.txt
-
-#merge rna-seq count
-paste <(awk '{print $1,"\t",$2}' hela_ercc_tophat/accepted_hits.count.txt) <(awk '{print $2}' shGFP_ercc_tophat/accepted_hits.count.txt)  <(awk '{print $2}' mettl3_1_ercc_tophat/accepted_hits.count.txt) <(awk '{print $2}' mettl3_2_ercc_tophat/accepted_hits.count.txt) > all.count.ercc.txt
-
 R:
-countTable <- read.delim("all.count.ercc.txt", row.names = 1)
-library( "edgeR")
-library("data.table")
-trlength = fread("gencode.v19.annotation.add.ercc.genelength")
-gnlength = trlength[,list(gene_id,tx_len)]
-setnames(gnlength, c('gene', 'length'))
-glength= gnlength[match(gsub(" ","",rownames(countTable)),gnlength$gene),]
-y <- DGEList(counts=countTable,genes=data.frame(Length=glength[,length]))
-y <- calcNormFactors(y)
-RPKM <- rpkm(y)
-write.table(RPKM, file="rpkm.ercc.list.txt",quote=F,row.names=T,col.names=T,sep="\t")
 halftime = list()
 for(sm in c("hela", "shGFP", "mettl3_1", "mettl3_2")) {
     control = paste0(sm,".A0h")
